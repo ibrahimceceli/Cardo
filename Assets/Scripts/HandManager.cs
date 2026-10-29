@@ -1,6 +1,8 @@
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
+using UnityEngine.EventSystems;
+using UnityEngine.UI;
 
 public class HandManager : MonoBehaviour
 {
@@ -8,48 +10,36 @@ public class HandManager : MonoBehaviour
     public int totalChips = 0;
     public float totalMultiplier = 1f;
     private int totalScore = 0;
-    private int remainingDiscards = 4;
-    private const int LEVEL_1_SCORE_THRESHOLD = 200;
-    private const int LEVEL_2_SCORE_THRESHOLD = 300;
-    private const int LEVEL_3_SCORE_THRESHOLD = 400;
-    private const int LEVEL_4_SCORE_THRESHOLD = 500;
-    private const int LEVEL_5_SCORE_THRESHOLD = 600;
-    private const int LEVEL_6_SCORE_THRESHOLD = 700;
-    private const int LEVEL_7_SCORE_THRESHOLD = 800;
-    private const int LEVEL_8_SCORE_THRESHOLD = 900;
-    private const int LEVEL_9_SCORE_THRESHOLD = 1000;
-    private const int LEVEL_10_SCORE_THRESHOLD = 1100;
-    private const int LEVEL_1_MAX_HANDS = 5;
-    private const int LEVEL_2_MAX_HANDS = 5;
-    private const int LEVEL_3_MAX_HANDS = 4;
-    private const int LEVEL_4_MAX_HANDS = 4;
-    private const int LEVEL_5_MAX_HANDS = 3;
-    private const int LEVEL_6_MAX_HANDS = 3;
-    private const int LEVEL_7_MAX_HANDS = 3;
-    private const int LEVEL_8_MAX_HANDS = 2;
-    private const int LEVEL_9_MAX_HANDS = 2;
-    private const int LEVEL_10_MAX_HANDS = 2;
+    private const int MAX_DISCARDS = 4;
+    private const int BASE_HAND_SIZE = 8;
     private const int MAX_JOKERS = 5;
+    private const float LEVEL_END_DELAY = 1f;
+    // Index 0 is level 1. The number of entries defines the number of levels.
+    private static readonly int[] LEVEL_SCORE_THRESHOLDS = { 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1100 };
+    private static readonly int[] LEVEL_MAX_HANDS = { 5, 5, 4, 4, 3, 3, 3, 2, 2, 2 };
+    private int remainingDiscards = MAX_DISCARDS;
     private int currentLevel = 1;
-    private int remainingHands = LEVEL_1_MAX_HANDS;
-    private bool hasCompletedLevel1 = false;
-    private bool hasCompletedLevel2 = false;
-    private bool hasCompletedLevel3 = false;
-    private bool hasCompletedLevel4 = false;
-    private bool hasCompletedLevel5 = false;
-    private bool hasCompletedLevel6 = false;
-    private bool hasCompletedLevel7 = false;
-    private bool hasCompletedLevel8 = false;
-    private bool hasCompletedLevel9 = false;
-    private bool hasCompletedLevel10 = false;
+    private int remainingHands = LEVEL_MAX_HANDS[0];
+    private bool isLevelComplete = false;
+    private bool isGameOver = false;
     private List<CardData> selectedJokers = new List<CardData>();
 
     public DeckManager deckManager;
     private UIManager uiManager;
-    
+
     private PokerHandEvaluator handEvaluator;
     private HandScoringService scoringService;
     private Camera mainCamera;
+    private PointerEventData uiPointerEventData;
+    private readonly List<RaycastResult> uiRaycastResults = new List<RaycastResult>();
+
+    private struct HandScore
+    {
+        public PokerHandType handType;
+        public int chips;
+        public float multiplier;
+        public int total;
+    }
 
     void Awake()
     {
@@ -59,41 +49,55 @@ public class HandManager : MonoBehaviour
         }
 
         uiManager = FindFirstObjectByType<UIManager>();
-        
+
         handEvaluator = new PokerHandEvaluator();
         scoringService = new HandScoringService();
-        
+
         mainCamera = Camera.main;
     }
 
-    void Start()
-    {
-        if (uiManager != null && uiManager.IsStartScreenActive())
-        {
-            return;
-        }
-        
-        if (uiManager != null)
-        {
-            uiManager.UpdateScore(0, 0);
-            uiManager.UpdateHandCount(remainingHands, GetMaxHandsForLevel(currentLevel));
-        }
-        UpdateDiscardUI();
-    }
-    
     void Update()
     {
-        if (hasCompletedLevel1 && currentLevel == 1)
+        if (isLevelComplete || isGameOver)
         {
             return;
         }
 
-        if (Input.GetMouseButtonDown(0))
+        if (Input.GetMouseButtonDown(0) && !IsPointerOverUI())
         {
             HandleCardClick();
         }
     }
-    
+
+    // Only UI graphics count here; the camera's PhysicsRaycaster also reports card colliders.
+    private bool IsPointerOverUI()
+    {
+        EventSystem eventSystem = EventSystem.current;
+        if (eventSystem == null)
+        {
+            return false;
+        }
+
+        if (uiPointerEventData == null)
+        {
+            uiPointerEventData = new PointerEventData(eventSystem);
+        }
+
+        uiPointerEventData.position = Input.mousePosition;
+        uiRaycastResults.Clear();
+        eventSystem.RaycastAll(uiPointerEventData, uiRaycastResults);
+
+        foreach (RaycastResult result in uiRaycastResults)
+        {
+            if (result.module is GraphicRaycaster)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private void HandleCardClick()
     {
         if (mainCamera == null)
@@ -209,50 +213,62 @@ public class HandManager : MonoBehaviour
 
     public void UpdateSelectedHandType()
     {
+        if (uiManager == null)
+        {
+            return;
+        }
+
         List<CardObject> selectedCards = GetSelectedCards();
 
         if (selectedCards.Count == 0 || selectedCards.Count > 5)
         {
-            if (uiManager != null)
-            {
-                uiManager.HideHandType();
-                uiManager.UpdateScore(0, 0);
-            }
+            uiManager.HideHandType();
+            uiManager.UpdateScore(0, 0);
             return;
         }
 
-        PokerHandType handType = handEvaluator.DetermineHand(selectedCards);
+        HandScore score = CalculateHandScore(selectedCards);
 
-        if (handType != PokerHandType.None)
+        if (score.handType != PokerHandType.None)
         {
-            if (uiManager != null)
-            {
-                uiManager.ShowHandType(handType);
-                
-                int baseChipScore = scoringService.GetBaseScore(handType);
-                float multiplier = scoringService.GetMultiplier(handType);
-                
-                int jokerBonusScore = GetTotalJokerBonusScore();
-                float jokerMultiplierBonus = GetTotalJokerMultiplierBonus();
-                float handTypeBasedMultiplierBonus = GetHandTypeBasedJokerMultiplierBonus(handType);
-                
-                List<CardObject> scoringCards = GetCardsThatFormHand(handType, selectedCards);
-                int suitBasedBonusScore = GetSuitBasedJokerBonusScore(scoringCards);
-                
-                baseChipScore += jokerBonusScore + suitBasedBonusScore;
-                multiplier += jokerMultiplierBonus + handTypeBasedMultiplierBonus;
-                
-                uiManager.UpdateScore(baseChipScore, multiplier);
-            }
+            uiManager.ShowHandType(score.handType);
+            uiManager.UpdateScore(score.chips, score.multiplier);
         }
         else
         {
-            if (uiManager != null)
+            uiManager.HideHandType();
+            uiManager.UpdateScore(0, 0);
+        }
+    }
+
+    // Single source of truth for scoring, shared by the selection preview and PlayHand.
+    private HandScore CalculateHandScore(List<CardObject> selectedCards)
+    {
+        HandScore score = new HandScore();
+        score.handType = handEvaluator.DetermineHand(selectedCards);
+
+        List<CardObject> scoringCards = GetCardsThatFormHand(score.handType, selectedCards);
+
+        int cardChipTotal = 0;
+        foreach (CardObject card in scoringCards)
+        {
+            if (card != null && card.cardInfo != null)
             {
-                uiManager.HideHandType();
-                uiManager.UpdateScore(0, 0);
+                cardChipTotal += card.cardInfo.NumericValue;
             }
         }
+
+        score.chips = scoringService.GetBaseScore(score.handType)
+            + cardChipTotal
+            + GetTotalJokerBonusScore()
+            + GetSuitBasedJokerBonusScore(scoringCards);
+
+        score.multiplier = scoringService.GetMultiplier(score.handType)
+            + GetTotalJokerMultiplierBonus()
+            + GetHandTypeBasedJokerMultiplierBonus(score.handType);
+
+        score.total = Mathf.RoundToInt(score.chips * score.multiplier);
+        return score;
     }
 
     private List<CardObject> GetSelectedCards()
@@ -481,73 +497,37 @@ public class HandManager : MonoBehaviour
         return selectedCount < 5;
     }
 
-    private void ResetSelection(List<CardObject> playedCards)
+    private void RemoveCardsFromHand(List<CardObject> cards)
     {
-        foreach (CardObject card in playedCards)
+        foreach (CardObject card in cards)
         {
-            if (card.isSelected)
-            {
-                card.DetectClick(playSound: false);
-            }
-
             currentHand.Remove(card);
             Destroy(card.gameObject);
         }
     }
 
+    // Draws as many replacements as the deck allows, so a short deck no longer means zero cards.
+    private void DrawReplacementCards(CardTransformData transformData)
+    {
+        if (deckManager == null)
+        {
+            return;
+        }
+
+        for (int i = 0; i < transformData.positions.Count; i++)
+        {
+            CardObject newCard = deckManager.DrawCardAtPosition(transformData.positions[i], transformData.rotations[i], transformData.sortingOrders[i]);
+            if (newCard == null)
+            {
+                break;
+            }
+        }
+    }
 
     public bool PlayHand()
     {
-        if (remainingHands <= 0)
+        if (isLevelComplete || isGameOver || remainingHands <= 0)
         {
-            int scoreThreshold = GetScoreThresholdForLevel(currentLevel);
-            bool hasCompletedLevel = false;
-            
-            if (currentLevel == 1 && !hasCompletedLevel1)
-            {
-                hasCompletedLevel = totalScore >= scoreThreshold;
-            }
-            else if (currentLevel == 2 && !hasCompletedLevel2)
-            {
-                hasCompletedLevel = totalScore >= scoreThreshold;
-            }
-            else if (currentLevel == 3 && !hasCompletedLevel3)
-            {
-                hasCompletedLevel = totalScore >= scoreThreshold;
-            }
-            else if (currentLevel == 4 && !hasCompletedLevel4)
-            {
-                hasCompletedLevel = totalScore >= scoreThreshold;
-            }
-            else if (currentLevel == 5 && !hasCompletedLevel5)
-            {
-                hasCompletedLevel = totalScore >= scoreThreshold;
-            }
-            else if (currentLevel == 6 && !hasCompletedLevel6)
-            {
-                hasCompletedLevel = totalScore >= scoreThreshold;
-            }
-            else if (currentLevel == 7 && !hasCompletedLevel7)
-            {
-                hasCompletedLevel = totalScore >= scoreThreshold;
-            }
-            else if (currentLevel == 8 && !hasCompletedLevel8)
-            {
-                hasCompletedLevel = totalScore >= scoreThreshold;
-            }
-            else if (currentLevel == 9 && !hasCompletedLevel9)
-            {
-                hasCompletedLevel = totalScore >= scoreThreshold;
-            }
-            else if (currentLevel == 10 && !hasCompletedLevel10)
-            {
-                hasCompletedLevel = totalScore >= scoreThreshold;
-            }
-            
-            if (!hasCompletedLevel && uiManager != null)
-            {
-                uiManager.ShowLoseMessage();
-            }
             return false;
         }
 
@@ -555,285 +535,144 @@ public class HandManager : MonoBehaviour
 
         if (selectedCards.Count == 0 || selectedCards.Count > 5)
         {
-            if (uiManager != null)
-            {
-                uiManager.UpdateDiscardStatus(remainingDiscards);
-            }
+            UpdateDiscardUI();
             return false;
         }
 
-        PokerHandType handType = handEvaluator.DetermineHand(selectedCards);
+        HandScore score = CalculateHandScore(selectedCards);
 
-        int baseChipScore = scoringService.GetBaseScore(handType);
-        float multiplier = scoringService.GetMultiplier(handType);
-        
-        int jokerBonusScore = GetTotalJokerBonusScore();
-        float jokerMultiplierBonus = GetTotalJokerMultiplierBonus();
-        float handTypeBasedMultiplierBonus = GetHandTypeBasedJokerMultiplierBonus(handType);
-        
-        multiplier += jokerMultiplierBonus;
-        multiplier += handTypeBasedMultiplierBonus;
-        
-        List<CardObject> scoringCards = GetCardsThatFormHand(handType, selectedCards);
-        int suitBasedBonusScore = GetSuitBasedJokerBonusScore(scoringCards);
-        
-        int cardChipTotal = 0;
-        foreach (var card in scoringCards)
-        {
-            if (card != null && card.cardInfo != null)
-            {
-                cardChipTotal += card.cardInfo.NumericValue;
-            }
-        }
-        
-        int totalChipsForHand = baseChipScore + cardChipTotal + jokerBonusScore + suitBasedBonusScore;
-        int finalScore = Mathf.RoundToInt(totalChipsForHand * multiplier);
+        totalScore += score.total;
+        totalChips += score.total;
+        totalMultiplier = score.multiplier;
 
-        totalScore += finalScore;
-        totalChips += finalScore;
-        totalMultiplier = multiplier;
-
-        bool wasLastHand = (remainingHands == 1);
         remainingHands--;
         UpdateHandCountUI();
 
-        UpdateScoreUI(totalChipsForHand, multiplier, totalScore);
-        
-        bool levelCompleted = false;
-        if (wasLastHand)
+        if (uiManager != null)
         {
-            int scoreThreshold = GetScoreThresholdForLevel(currentLevel);
-            if (currentLevel == 1 && !hasCompletedLevel1 && totalScore >= scoreThreshold)
-            {
-                hasCompletedLevel1 = true;
-                levelCompleted = true;
-                StartCoroutine(ShowJokerSelectionDelayed());
-            }
-            else if (currentLevel == 2 && !hasCompletedLevel2 && totalScore >= scoreThreshold)
-            {
-                hasCompletedLevel2 = true;
-                levelCompleted = true;
-                StartCoroutine(ShowJokerSelectionDelayed());
-            }
-            else if (currentLevel == 3 && !hasCompletedLevel3 && totalScore >= scoreThreshold)
-            {
-                hasCompletedLevel3 = true;
-                levelCompleted = true;
-                StartCoroutine(ShowJokerSelectionDelayed());
-            }
-            else if (currentLevel == 4 && !hasCompletedLevel4 && totalScore >= scoreThreshold)
-            {
-                hasCompletedLevel4 = true;
-                levelCompleted = true;
-                StartCoroutine(ShowJokerSelectionDelayed());
-            }
-            else if (currentLevel == 5 && !hasCompletedLevel5 && totalScore >= scoreThreshold)
-            {
-                hasCompletedLevel5 = true;
-                levelCompleted = true;
-                StartCoroutine(ShowJokerSelectionDelayed());
-            }
-            else if (currentLevel == 6 && !hasCompletedLevel6 && totalScore >= scoreThreshold)
-            {
-                hasCompletedLevel6 = true;
-                levelCompleted = true;
-                StartCoroutine(ShowJokerSelectionDelayed());
-            }
-            else if (currentLevel == 7 && !hasCompletedLevel7 && totalScore >= scoreThreshold)
-            {
-                hasCompletedLevel7 = true;
-                levelCompleted = true;
-                StartCoroutine(ShowJokerSelectionDelayed());
-            }
-            else if (currentLevel == 8 && !hasCompletedLevel8 && totalScore >= scoreThreshold)
-            {
-                hasCompletedLevel8 = true;
-                levelCompleted = true;
-                StartCoroutine(ShowJokerSelectionDelayed());
-            }
-            else if (currentLevel == 9 && !hasCompletedLevel9 && totalScore >= scoreThreshold)
-            {
-                hasCompletedLevel9 = true;
-                levelCompleted = true;
-                StartCoroutine(ShowJokerSelectionDelayed());
-            }
-            else if (currentLevel == 10 && !hasCompletedLevel10 && totalScore >= scoreThreshold)
-            {
-                hasCompletedLevel10 = true;
-                levelCompleted = true;
-                if (uiManager != null)
-                {
-                    uiManager.ShowWinMessage();
-                }
-            }
-            
-            if (!levelCompleted)
-            {
-                CheckLevelCompletionAfterLastHand();
-            }
+            uiManager.UpdateScore(totalScore);
         }
 
         CardTransformData transformData = CardTransformHelper.CollectCardTransforms(selectedCards);
-        
+
         // Register played cards in DeckManager BEFORE destroying them
         if (deckManager != null)
         {
             deckManager.RegisterPlayedDiscardedCards(selectedCards);
         }
-        
-        ResetSelection(selectedCards);
-        
-        if (levelCompleted)
+
+        RemoveCardsFromHand(selectedCards);
+
+        if (totalScore >= GetScoreThresholdForLevel(currentLevel))
         {
-            HideHandCards();
+            CompleteLevel();
+        }
+        else if (remainingHands <= 0)
+        {
+            EndRun(won: false);
         }
         else
         {
-            bool shouldDrawCards = true;
-            if (currentLevel == 1 && hasCompletedLevel1)
-            {
-                shouldDrawCards = false;
-            }
-            else if (currentLevel == 2 && hasCompletedLevel2)
-            {
-                shouldDrawCards = false;
-            }
-            else if (currentLevel == 3 && hasCompletedLevel3)
-            {
-                shouldDrawCards = false;
-            }
-            else if (currentLevel == 4 && hasCompletedLevel4)
-            {
-                shouldDrawCards = false;
-            }
-            else if (currentLevel == 5 && hasCompletedLevel5)
-            {
-                shouldDrawCards = false;
-            }
-            else if (currentLevel == 6 && hasCompletedLevel6)
-            {
-                shouldDrawCards = false;
-            }
-            else if (currentLevel == 7 && hasCompletedLevel7)
-            {
-                shouldDrawCards = false;
-            }
-            else if (currentLevel == 8 && hasCompletedLevel8)
-            {
-                shouldDrawCards = false;
-            }
-            else if (currentLevel == 9 && hasCompletedLevel9)
-            {
-                shouldDrawCards = false;
-            }
-            else if (currentLevel == 10 && hasCompletedLevel10)
-            {
-                shouldDrawCards = false;
-            }
-            
-            if (shouldDrawCards)
-            {
-                int cardsToDraw = transformData.positions.Count;
-                
-                if (deckManager != null && deckManager.RemainingCardCount >= cardsToDraw)
-                {
-                    for (int i = 0; i < cardsToDraw; i++)
-                    {
-                        CardObject newCard = deckManager.DrawCardAtPosition(transformData.positions[i], transformData.rotations[i], transformData.sortingOrders[i]);
-                        if (newCard == null)
-                        {
-                            break;
-                        }
-                    }
-                }
-            }
+            DrawReplacementCards(transformData);
         }
-        
-        UpdateSelectedHandType();
-        
+
+        // Keep the played hand's breakdown on screen until the player selects new cards.
         if (uiManager != null)
         {
+            uiManager.ShowHandType(score.handType);
+            uiManager.UpdateScore(score.chips, score.multiplier);
             uiManager.UpdateDeckInfo();
         }
-        
+
         return true;
     }
 
     public void DiscardSelectedAndDraw()
     {
+        if (isLevelComplete || isGameOver)
+        {
+            return;
+        }
+
         List<CardObject> selectedCards = GetSelectedCards();
 
-        if (selectedCards.Count == 0)
+        if (selectedCards.Count == 0 || selectedCards.Count > 5 || remainingDiscards <= 0)
         {
-            if (uiManager != null)
-            {
-                uiManager.UpdateDiscardStatus(remainingDiscards);
-            }
-            return;
-        }
-
-        if (selectedCards.Count > 5)
-        {
-            if (uiManager != null)
-            {
-                uiManager.UpdateDiscardStatus(remainingDiscards);
-            }
-            return;
-        }
-
-        if (remainingDiscards <= 0)
-        {
-            if (uiManager != null)
-            {
-                uiManager.UpdateDiscardStatus(remainingDiscards);
-            }
+            UpdateDiscardUI();
             return;
         }
 
         remainingDiscards--;
 
         CardTransformData transformData = CardTransformHelper.CollectCardTransforms(selectedCards);
-        
+
         // Register discarded cards in DeckManager
         if (deckManager != null)
         {
             deckManager.RegisterPlayedDiscardedCards(selectedCards);
         }
-        
-        foreach (CardObject card in selectedCards)
-        {
-            currentHand.Remove(card);
-            Destroy(card.gameObject);
-        }
 
-        if (!hasCompletedLevel1 || currentLevel != 1)
-        {
-            int cardsToDraw = transformData.positions.Count;
-            
-            if (deckManager != null && deckManager.RemainingCardCount >= cardsToDraw)
-            {
-                for (int i = 0; i < cardsToDraw; i++)
-                {
-                    CardObject newCard = deckManager.DrawCardAtPosition(transformData.positions[i], transformData.rotations[i], transformData.sortingOrders[i]);
-                    if (newCard == null)
-                    {
-                        break;
-                    }
-                }
-            }
-        }
-        
+        RemoveCardsFromHand(selectedCards);
+        DrawReplacementCards(transformData);
+
+        UpdateSelectedHandType();
         UpdateDiscardUI();
-        
+
         if (uiManager != null)
         {
             uiManager.UpdateDeckInfo();
         }
     }
-    
+
+    private void CompleteLevel()
+    {
+        isLevelComplete = true;
+
+        if (currentLevel >= MaxLevel)
+        {
+            EndRun(won: true);
+            return;
+        }
+
+        StartCoroutine(ShowJokerSelectionDelayed());
+    }
+
+    private void EndRun(bool won)
+    {
+        isGameOver = true;
+        StartCoroutine(ShowGameOverDelayed(won));
+    }
+
+    private System.Collections.IEnumerator ShowGameOverDelayed(bool won)
+    {
+        // Cards are world objects drawn in front of the canvas, so they must be hidden for the overlay.
+        HideHandCards();
+        yield return new WaitForSeconds(LEVEL_END_DELAY);
+
+        if (uiManager != null)
+        {
+            uiManager.ShowGameOver(won, totalScore, currentLevel);
+        }
+    }
+
     public int GetRemainingDiscards()
     {
         return remainingDiscards;
+    }
+
+    public int MaxDiscards
+    {
+        get { return MAX_DISCARDS; }
+    }
+
+    public int MaxJokers
+    {
+        get { return MAX_JOKERS; }
+    }
+
+    public int MaxLevel
+    {
+        get { return LEVEL_SCORE_THRESHOLDS.Length; }
     }
 
     public int CurrentLevel
@@ -841,14 +680,14 @@ public class HandManager : MonoBehaviour
         get { return currentLevel; }
     }
 
-    public bool HasCompletedLevel1
+    public int TotalScore
     {
-        get { return hasCompletedLevel1; }
+        get { return totalScore; }
     }
 
-    public bool HasCompletedLevel2
+    public int GetCurrentScoreThreshold()
     {
-        get { return hasCompletedLevel2; }
+        return GetScoreThresholdForLevel(currentLevel);
     }
 
     public void AddJoker(CardData joker)
@@ -1109,53 +948,40 @@ public class HandManager : MonoBehaviour
 
     private int GetMaxHandsForLevel(int level)
     {
-        switch (level)
-        {
-            case 1: return LEVEL_1_MAX_HANDS;
-            case 2: return LEVEL_2_MAX_HANDS;
-            case 3: return LEVEL_3_MAX_HANDS;
-            case 4: return LEVEL_4_MAX_HANDS;
-            case 5: return LEVEL_5_MAX_HANDS;
-            case 6: return LEVEL_6_MAX_HANDS;
-            case 7: return LEVEL_7_MAX_HANDS;
-            case 8: return LEVEL_8_MAX_HANDS;
-            case 9: return LEVEL_9_MAX_HANDS;
-            case 10: return LEVEL_10_MAX_HANDS;
-            default: return LEVEL_1_MAX_HANDS;
-        }
+        int index = Mathf.Clamp(level - 1, 0, LEVEL_MAX_HANDS.Length - 1);
+        return LEVEL_MAX_HANDS[index];
     }
 
     private int GetScoreThresholdForLevel(int level)
     {
-        switch (level)
-        {
-            case 1: return LEVEL_1_SCORE_THRESHOLD;
-            case 2: return LEVEL_2_SCORE_THRESHOLD;
-            case 3: return LEVEL_3_SCORE_THRESHOLD;
-            case 4: return LEVEL_4_SCORE_THRESHOLD;
-            case 5: return LEVEL_5_SCORE_THRESHOLD;
-            case 6: return LEVEL_6_SCORE_THRESHOLD;
-            case 7: return LEVEL_7_SCORE_THRESHOLD;
-            case 8: return LEVEL_8_SCORE_THRESHOLD;
-            case 9: return LEVEL_9_SCORE_THRESHOLD;
-            case 10: return LEVEL_10_SCORE_THRESHOLD;
-            default: return LEVEL_1_SCORE_THRESHOLD;
-        }
+        int index = Mathf.Clamp(level - 1, 0, LEVEL_SCORE_THRESHOLDS.Length - 1);
+        return LEVEL_SCORE_THRESHOLDS[index];
     }
 
-    public void StartLevel2()
+    // Starts a fresh run from level 1 with no jokers. Used by the start screen and the restart button.
+    public void StartNewRun()
     {
-        StartLevel(2);
+        selectedJokers.Clear();
+        StartLevel(1);
+
+        if (uiManager != null)
+        {
+            uiManager.UpdateJokerCount(GetJokerCount());
+        }
     }
 
     public void StartLevel(int level)
     {
+        StopAllCoroutines();
+
         currentLevel = level;
         totalScore = 0;
         totalChips = 0;
         totalMultiplier = 1f;
-        remainingDiscards = 4;
+        remainingDiscards = MAX_DISCARDS;
         remainingHands = GetMaxHandsForLevel(level);
+        isLevelComplete = false;
+        isGameOver = false;
 
         HideAllCards();
         ClearCurrentHand();
@@ -1164,23 +990,21 @@ public class HandManager : MonoBehaviour
         {
             deckManager.InitializeDeck();
             deckManager.ShuffleDrawDeck();
-            
-            int baseHandSize = 8;
-            int handSizeBonus = GetTotalHandSizeBonus();
-            deckManager.DrawInitialHand(baseHandSize + handSizeBonus);
+            deckManager.DrawInitialHand(BASE_HAND_SIZE + GetTotalHandSizeBonus());
         }
 
         if (uiManager != null)
         {
+            uiManager.HideGameOver();
             uiManager.UpdateDiscardStatus(remainingDiscards);
             if (deckManager != null)
             {
                 uiManager.UpdateDeckCount(deckManager.RemainingCardCount, deckManager.TotalCardCount);
             }
+            uiManager.HideHandType();
             uiManager.UpdateScore(0, 0);
             uiManager.UpdateScore(0);
             uiManager.UpdateHandCount(remainingHands, GetMaxHandsForLevel(level));
-            uiManager.HideLoseMessage();
         }
     }
 
@@ -1213,17 +1037,6 @@ public class HandManager : MonoBehaviour
     }
 
     
-    private void UpdateScoreUI(int baseChipScore, float multiplier, int totalScore)
-    {
-        if (uiManager != null)
-        {
-            uiManager.UpdateScore(baseChipScore, multiplier);
-            uiManager.UpdateScore(totalScore);
-        }
-        
-        CheckLevelCompletion();
-    }
-    
     private void UpdateDiscardUI()
     {
         if (uiManager != null)
@@ -1239,212 +1052,11 @@ public class HandManager : MonoBehaviour
             uiManager.UpdateHandCount(remainingHands, GetMaxHandsForLevel(currentLevel));
         }
     }
-    
-    private void CheckLevelCompletion()
-    {
-        if (remainingHands <= 0)
-        {
-            return;
-        }
-        
-        int scoreThreshold = GetScoreThresholdForLevel(currentLevel);
-        
-        if (currentLevel == 1 && !hasCompletedLevel1)
-        {
-            if (totalScore >= scoreThreshold)
-            {
-                hasCompletedLevel1 = true;
-                StartCoroutine(ShowJokerSelectionDelayed());
-            }
-        }
-        else if (currentLevel == 2 && !hasCompletedLevel2)
-        {
-            if (totalScore >= scoreThreshold)
-            {
-                hasCompletedLevel2 = true;
-                StartCoroutine(ShowJokerSelectionDelayed());
-            }
-        }
-        else if (currentLevel == 3 && !hasCompletedLevel3)
-        {
-            if (totalScore >= scoreThreshold)
-            {
-                hasCompletedLevel3 = true;
-                StartCoroutine(ShowJokerSelectionDelayed());
-            }
-        }
-        else if (currentLevel == 4 && !hasCompletedLevel4)
-        {
-            if (totalScore >= scoreThreshold)
-            {
-                hasCompletedLevel4 = true;
-                StartCoroutine(ShowJokerSelectionDelayed());
-            }
-        }
-        else if (currentLevel == 5 && !hasCompletedLevel5)
-        {
-            if (totalScore >= scoreThreshold)
-            {
-                hasCompletedLevel5 = true;
-                StartCoroutine(ShowJokerSelectionDelayed());
-            }
-        }
-        else if (currentLevel == 6 && !hasCompletedLevel6)
-        {
-            if (totalScore >= scoreThreshold)
-            {
-                hasCompletedLevel6 = true;
-                StartCoroutine(ShowJokerSelectionDelayed());
-            }
-        }
-        else if (currentLevel == 7 && !hasCompletedLevel7)
-        {
-            if (totalScore >= scoreThreshold)
-            {
-                hasCompletedLevel7 = true;
-                StartCoroutine(ShowJokerSelectionDelayed());
-            }
-        }
-        else if (currentLevel == 8 && !hasCompletedLevel8)
-        {
-            if (totalScore >= scoreThreshold)
-            {
-                hasCompletedLevel8 = true;
-                StartCoroutine(ShowJokerSelectionDelayed());
-            }
-        }
-        else if (currentLevel == 9 && !hasCompletedLevel9)
-        {
-            if (totalScore >= scoreThreshold)
-            {
-                hasCompletedLevel9 = true;
-                StartCoroutine(ShowJokerSelectionDelayed());
-            }
-        }
-        else if (currentLevel == 10 && !hasCompletedLevel10)
-        {
-            if (totalScore >= scoreThreshold)
-            {
-                hasCompletedLevel10 = true;
-                
-                if (uiManager != null)
-                {
-                    uiManager.ShowWinMessage();
-                }
-            }
-        }
-    }
-    
-    private void CheckLevelCompletionAfterLastHand()
-    {
-        int scoreThreshold = GetScoreThresholdForLevel(currentLevel);
-        bool hasCompletedLevel = false;
-        
-        if (currentLevel == 1 && !hasCompletedLevel1)
-        {
-            hasCompletedLevel = totalScore >= scoreThreshold;
-            if (hasCompletedLevel)
-            {
-                hasCompletedLevel1 = true;
-                StartCoroutine(ShowJokerSelectionDelayed());
-            }
-        }
-        else if (currentLevel == 2 && !hasCompletedLevel2)
-        {
-            hasCompletedLevel = totalScore >= scoreThreshold;
-            if (hasCompletedLevel)
-            {
-                hasCompletedLevel2 = true;
-                StartCoroutine(ShowJokerSelectionDelayed());
-            }
-        }
-        else if (currentLevel == 3 && !hasCompletedLevel3)
-        {
-            hasCompletedLevel = totalScore >= scoreThreshold;
-            if (hasCompletedLevel)
-            {
-                hasCompletedLevel3 = true;
-                StartCoroutine(ShowJokerSelectionDelayed());
-            }
-        }
-        else if (currentLevel == 4 && !hasCompletedLevel4)
-        {
-            hasCompletedLevel = totalScore >= scoreThreshold;
-            if (hasCompletedLevel)
-            {
-                hasCompletedLevel4 = true;
-                StartCoroutine(ShowJokerSelectionDelayed());
-            }
-        }
-        else if (currentLevel == 5 && !hasCompletedLevel5)
-        {
-            hasCompletedLevel = totalScore >= scoreThreshold;
-            if (hasCompletedLevel)
-            {
-                hasCompletedLevel5 = true;
-                StartCoroutine(ShowJokerSelectionDelayed());
-            }
-        }
-        else if (currentLevel == 6 && !hasCompletedLevel6)
-        {
-            hasCompletedLevel = totalScore >= scoreThreshold;
-            if (hasCompletedLevel)
-            {
-                hasCompletedLevel6 = true;
-                StartCoroutine(ShowJokerSelectionDelayed());
-            }
-        }
-        else if (currentLevel == 7 && !hasCompletedLevel7)
-        {
-            hasCompletedLevel = totalScore >= scoreThreshold;
-            if (hasCompletedLevel)
-            {
-                hasCompletedLevel7 = true;
-                StartCoroutine(ShowJokerSelectionDelayed());
-            }
-        }
-        else if (currentLevel == 8 && !hasCompletedLevel8)
-        {
-            hasCompletedLevel = totalScore >= scoreThreshold;
-            if (hasCompletedLevel)
-            {
-                hasCompletedLevel8 = true;
-                StartCoroutine(ShowJokerSelectionDelayed());
-            }
-        }
-        else if (currentLevel == 9 && !hasCompletedLevel9)
-        {
-            hasCompletedLevel = totalScore >= scoreThreshold;
-            if (hasCompletedLevel)
-            {
-                hasCompletedLevel9 = true;
-                StartCoroutine(ShowJokerSelectionDelayed());
-            }
-        }
-        else if (currentLevel == 10 && !hasCompletedLevel10)
-        {
-            hasCompletedLevel = totalScore >= scoreThreshold;
-            if (hasCompletedLevel)
-            {
-                hasCompletedLevel10 = true;
-                
-                if (uiManager != null)
-                {
-                    uiManager.ShowWinMessage();
-                }
-            }
-        }
-        
-        if (!hasCompletedLevel && uiManager != null)
-        {
-            uiManager.ShowLoseMessage();
-        }
-    }
 
     private System.Collections.IEnumerator ShowJokerSelectionDelayed()
     {
         HideHandCards();
-        yield return new WaitForSeconds(1f);
+        yield return new WaitForSeconds(LEVEL_END_DELAY);
         ShowJokerSelection();
     }
 

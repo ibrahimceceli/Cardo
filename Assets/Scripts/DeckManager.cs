@@ -38,27 +38,9 @@ public class DeckManager : MonoBehaviour
             return;
         }
 
+        // The initial hand is drawn by HandManager.StartLevel when the run starts.
         InitializeDeck();
         ShuffleDrawDeck();
-        
-        if (uiManager == null)
-        {
-            uiManager = FindFirstObjectByType<UIManager>();
-        }
-        
-        if (uiManager != null && uiManager.IsStartScreenActive())
-        {
-            return;
-        }
-        
-        int baseHandSize = 8;
-        int handSizeBonus = 0;
-        if (handManager != null)
-        {
-            handSizeBonus = handManager.GetTotalHandSizeBonus();
-        }
-        
-        DrawInitialHand(baseHandSize + handSizeBonus);
     }
 
     public void InitializeDeck()

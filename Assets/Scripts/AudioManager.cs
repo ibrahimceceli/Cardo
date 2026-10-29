@@ -36,6 +36,7 @@ public class AudioManager : MonoBehaviour
     private const float CROSSFADE_DURATION = 3f;
     private bool isPlayingMusic1 = true;
     private bool isMusicPlaying = false;
+    private bool isCrossfading = false;
 
     void Awake()
     {
@@ -106,14 +107,21 @@ public class AudioManager : MonoBehaviour
 
     void Update()
     {
-        if (!isMusicPlaying)
+        if (!isMusicPlaying || isCrossfading)
         {
             return;
         }
 
         AudioSource currentSource = isPlayingMusic1 ? musicSource1 : musicSource2;
-        
-        if (currentSource != null && !currentSource.isPlaying)
+
+        if (currentSource == null || currentSource.clip == null)
+        {
+            return;
+        }
+
+        // Start fading before the track ends; waiting for it to stop made the crossfade a plain fade-in.
+        bool isNearEnd = currentSource.time >= currentSource.clip.length - CROSSFADE_DURATION;
+        if (!currentSource.isPlaying || isNearEnd)
         {
             StartCrossfade();
         }
@@ -135,38 +143,32 @@ public class AudioManager : MonoBehaviour
 
     private void StartCrossfade()
     {
-        if (isPlayingMusic1)
-        {
-            if (backgroundMusic2 == null || musicSource2 == null)
-            {
-                return;
-            }
+        AudioSource fadeOutSource = isPlayingMusic1 ? musicSource1 : musicSource2;
+        AudioSource fadeInSource = isPlayingMusic1 ? musicSource2 : musicSource1;
+        AudioClip nextClip = isPlayingMusic1 ? backgroundMusic2 : backgroundMusic1;
 
-            musicSource2.clip = backgroundMusic2;
-            musicSource2.volume = 0f;
-            musicSource2.Play();
-            
-            StartCoroutine(CrossfadeCoroutine(musicSource1, musicSource2));
-            isPlayingMusic1 = false;
-        }
-        else
+        // With a single track assigned, crossfade the track into itself so the music keeps looping.
+        if (nextClip == null && fadeOutSource != null)
         {
-            if (backgroundMusic1 == null || musicSource1 == null)
-            {
-                return;
-            }
-
-            musicSource1.clip = backgroundMusic1;
-            musicSource1.volume = 0f;
-            musicSource1.Play();
-            
-            StartCoroutine(CrossfadeCoroutine(musicSource2, musicSource1));
-            isPlayingMusic1 = true;
+            nextClip = fadeOutSource.clip;
         }
+
+        if (fadeInSource == null || nextClip == null)
+        {
+            return;
+        }
+
+        fadeInSource.clip = nextClip;
+        fadeInSource.volume = 0f;
+        fadeInSource.Play();
+
+        isPlayingMusic1 = !isPlayingMusic1;
+        StartCoroutine(CrossfadeCoroutine(fadeOutSource, fadeInSource));
     }
 
     private System.Collections.IEnumerator CrossfadeCoroutine(AudioSource fadeOutSource, AudioSource fadeInSource)
     {
+        isCrossfading = true;
         float elapsedTime = 0f;
         float startVolumeOut = fadeOutSource != null ? fadeOutSource.volume : 0f;
         float startVolumeIn = fadeInSource != null ? fadeInSource.volume : 0f;
@@ -199,6 +201,8 @@ public class AudioManager : MonoBehaviour
         {
             fadeInSource.volume = musicVolume;
         }
+
+        isCrossfading = false;
     }
 
     public void PlaySFX()

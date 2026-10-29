@@ -98,7 +98,7 @@ public class JokerSelectionManager : MonoBehaviour
         oldJokerSelectedMap.Clear();
         originalScales.Clear();
 
-        bool isFull = handManager != null && handManager.GetJokerCount() >= 5;
+        bool isFull = handManager != null && handManager.GetJokerCount() >= handManager.MaxJokers;
 
         for (int i = 0; i < jokerSpawnPoints.Length && i < originalSpawnPointPositions.Length; i++)
         {
@@ -347,7 +347,7 @@ public class JokerSelectionManager : MonoBehaviour
 
         if (handManager != null)
         {
-            if (handManager.GetJokerCount() >= 5)
+            if (handManager.GetJokerCount() >= handManager.MaxJokers)
             {
                 return;
             }
@@ -355,7 +355,7 @@ public class JokerSelectionManager : MonoBehaviour
             handManager.AddJoker(selectedJokerData);
             
             int nextLevel = handManager.CurrentLevel + 1;
-            if (nextLevel <= 10)
+            if (nextLevel <= handManager.MaxLevel)
             {
                 handManager.StartLevel(nextLevel);
             }
@@ -633,7 +633,7 @@ public class JokerSelectionManager : MonoBehaviour
             }
 
             int nextLevel = handManager.CurrentLevel + 1;
-            if (nextLevel <= 10)
+            if (nextLevel <= handManager.MaxLevel)
             {
                 handManager.StartLevel(nextLevel);
             }
@@ -673,7 +673,7 @@ public class JokerSelectionManager : MonoBehaviour
         }
 
         int nextLevel = handManager.CurrentLevel + 1;
-        if (nextLevel <= 10)
+        if (nextLevel <= handManager.MaxLevel)
         {
             handManager.StartLevel(nextLevel);
         }

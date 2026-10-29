@@ -42,7 +42,8 @@ public static class CardTransformHelper
                 continue;
             }
 
-            positions.Add(card.transform.position);
+            // Resting position, so replacement cards are not spawned at a selected card's lifted spot.
+            positions.Add(card.RestingPosition);
             rotations.Add(card.transform.rotation);
 
             // Use cached SpriteRenderer property instead of GetComponent

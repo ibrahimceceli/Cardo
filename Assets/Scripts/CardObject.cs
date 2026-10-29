@@ -84,16 +84,18 @@ public class CardObject : MonoBehaviour
         }
     }
 
-    void Start()
+    // Awake runs inside Instantiate, so these are cached before the card can be selected.
+    // (Caching them in Start left the scale at zero if a card was clicked on its first frame.)
+    void Awake()
     {
         originalPosition = transform.position;
         originalScale = transform.localScale;
-        
+
         if (spriteRenderer == null)
         {
             spriteRenderer = GetComponent<SpriteRenderer>();
         }
-        
+
         if (cardCollider == null)
         {
             cardCollider = GetComponent<Collider>();
@@ -102,14 +104,30 @@ public class CardObject : MonoBehaviour
         if (spriteRenderer != null)
         {
             originalColor = spriteRenderer.color;
-            
-            AdjustColliderToSprite();
         }
-        
+
         if (mainCamera == null)
         {
             mainCamera = Camera.main;
         }
+    }
+
+    // Position of the card in the hand layout, ignoring the selection lift.
+    public Vector3 RestingPosition
+    {
+        get { return originalPosition; }
+    }
+
+    // Lift along the camera's up axis so the selection is visible from the top-down camera.
+    private Vector3 GetSelectionLift()
+    {
+        if (mainCamera == null)
+        {
+            mainCamera = Camera.main;
+        }
+
+        Vector3 screenUp = mainCamera != null ? mainCamera.transform.up : Vector3.up;
+        return screenUp * selectionOffset;
     }
 
     void OnMouseDown()
@@ -315,7 +333,7 @@ public class CardObject : MonoBehaviour
 
         if (isSelected)
         {
-            transform.position = originalPosition + new Vector3(0, selectionOffset, 0);
+            transform.position = originalPosition + GetSelectionLift();
             transform.localScale = originalScale * selectionScale;
 
             if (spriteRenderer != null)
@@ -346,7 +364,7 @@ public class CardObject : MonoBehaviour
 
         if (isSelected)
         {
-            transform.position = originalPosition + new Vector3(0, selectionOffset, 0);
+            transform.position = originalPosition + GetSelectionLift();
         }
         else
         {

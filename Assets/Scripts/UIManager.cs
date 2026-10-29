@@ -15,7 +15,6 @@ public class UIManager : MonoBehaviour
     public TMP_Text multiplierText;
     public TMP_Text scoreText;
     public TMP_Text handTypeText;
-    public TMP_Text winMessageText;
     public TMP_Text deckCountText;
     public TMP_Text jokerCountText;
     public TMP_Text handCountText;
@@ -38,7 +37,13 @@ public class UIManager : MonoBehaviour
     [Header("Start Screen UI")]
     public GameObject startScreenUI;
     public TMP_Text clickToPlayText;
-    
+
+    [Header("Game Over UI")]
+    public GameObject gameOverPanel;
+    public TMP_Text gameOverTitleText;
+    public TMP_Text gameOverDetailText;
+    public Button restartButton;
+
     [Header("Background Panel Manager")]
     public BackgroundPanelManager backgroundPanelManager;
     
@@ -66,7 +71,6 @@ public class UIManager : MonoBehaviour
     private Image scoreBackground;
     private Image discardBackground;
     private Image handTypeBackground;
-    private Image winMessageBackground;
     private Image deckCountBackground;
     private Image jokerCountBackground;
     private Image handCountBackground;
@@ -176,29 +180,12 @@ public class UIManager : MonoBehaviour
 
     void Start()
     {
-        if (Application.isPlaying)
+        ShowStartScreen();
+
+        // Without a start screen the run begins immediately.
+        if (!IsStartScreenActive())
         {
-            ShowStartScreen();
-        }
-        
-        if (!Application.isPlaying)
-        {
-            CreateBackgroundPanelsIfNeeded();
-        }
-        else
-        {
-            if (!IsStartScreenActive())
-            {
-                StartCoroutine(CreateBackgroundPanelsDelayed());
-            }
-        }
-        
-        if (Application.isPlaying)
-        {
-            if (!IsStartScreenActive())
-            {
-                StartCoroutine(InitializeScoreUIDelayed());
-            }
+            StartCoroutine(StartGameAfterScreenHide());
         }
     }
     
@@ -226,7 +213,6 @@ public class UIManager : MonoBehaviour
                 { "ScoreBackground", (child) => backgroundPanelManager.SetupBackground(child, ref scoreBackground, ref scoreText, (text) => ConfigureText(text)) },
                 { "DiscardBackground", (child) => backgroundPanelManager.SetupBackground(child, ref discardBackground, ref statusText, (text) => ConfigureText(text)) },
                 { "HandTypeBackground", (child) => backgroundPanelManager.SetupBackground(child, ref handTypeBackground, ref handTypeText, (text) => ConfigureText(text)) },
-                { "WinMessageBackground", (child) => backgroundPanelManager.SetupBackground(child, ref winMessageBackground, ref winMessageText, (text) => ConfigureText(text)) },
                 { "DeckCountBackground", (child) => backgroundPanelManager.SetupBackground(child, ref deckCountBackground, ref deckCountText, (text) => ConfigureText(text)) },
                 { "JokerCountBackground", (child) => backgroundPanelManager.SetupBackground(child, ref jokerCountBackground, ref jokerCountText, (text) => ConfigureText(text)) },
                 { "HandCountBackground", (child) => backgroundPanelManager.SetupBackground(child, ref handCountBackground, ref handCountText, (text) => ConfigureText(text)) }
@@ -252,7 +238,6 @@ public class UIManager : MonoBehaviour
         ConfigureText(scoreText, setActive: false);
         ConfigureText(statusText, setActive: false);
         ConfigureText(handTypeText, setActive: false);
-        ConfigureText(winMessageText, setActive: false);
         ConfigureText(deckCountText, setActive: false);
         ConfigureText(jokerCountText, setActive: false);
         ConfigureText(handCountText, setActive: false);
@@ -272,6 +257,7 @@ public class UIManager : MonoBehaviour
         if (handManager != null)
         {
             UpdateScore(0, 0);
+            UpdateScore(handManager.TotalScore);
             UpdateDiscardStatus(handManager.GetRemainingDiscards());
             UpdateHandCount(handManager.GetRemainingHands(), handManager.GetMaxHands());
         }
@@ -346,6 +332,7 @@ public class UIManager : MonoBehaviour
         EnsureTextActive(handCountText);
     }
 
+    // Button listeners are wired here only; the scene must not add persistent onClick calls for them.
     void OnEnable()
     {
         if (Application.isPlaying)
@@ -358,7 +345,11 @@ public class UIManager : MonoBehaviour
             {
                 discardButton.onClick.AddListener(HandleDiscardClicked);
             }
-            
+            if (restartButton != null)
+            {
+                restartButton.onClick.AddListener(HandleRestartClicked);
+            }
+
             SetupStartScreenClick();
             
             if (handManager != null && multiplierText != null)
@@ -383,7 +374,11 @@ public class UIManager : MonoBehaviour
         {
             jokerViewBackButton.onClick.RemoveListener(HandleJokerViewBackButtonClicked);
         }
-        
+        if (restartButton != null)
+        {
+            restartButton.onClick.RemoveListener(HandleRestartClicked);
+        }
+
         if (startScreenUI != null)
         {
             UnityEngine.EventSystems.EventTrigger trigger = startScreenUI.GetComponent<UnityEngine.EventSystems.EventTrigger>();
@@ -423,6 +418,30 @@ public class UIManager : MonoBehaviour
         }
 
         handManager.DiscardSelectedAndDraw();
+    }
+
+    public void HandleRestartClicked()
+    {
+        if (AudioManager.Instance != null)
+        {
+            AudioManager.Instance.PlaySFX();
+        }
+
+        if (handManager == null)
+        {
+            return;
+        }
+
+        HideGameOver();
+        HideJokerSelectionUI();
+        ShowNormalGameUI();
+
+        if (deckInfoText != null)
+        {
+            deckInfoText.gameObject.SetActive(false);
+        }
+
+        handManager.StartNewRun();
     }
 
     public void HandleDeckButtonClicked()
@@ -505,6 +524,18 @@ public class UIManager : MonoBehaviour
 
     public void HideJokerView()
     {
+        HideJokerViewPanel();
+        ShowNormalGameUI();
+
+        if (handManager != null)
+        {
+            handManager.ShowHandCards();
+        }
+    }
+
+    // Hides only the joker view itself, without bringing the game HUD back (used by the start screen).
+    private void HideJokerViewPanel()
+    {
         if (jokerViewUI != null)
         {
             jokerViewUI.SetActive(false);
@@ -515,13 +546,6 @@ public class UIManager : MonoBehaviour
         if (jokerTooltip != null)
         {
             jokerTooltip.HideTooltip();
-        }
-
-        ShowNormalGameUI();
-
-        if (handManager != null)
-        {
-            handManager.ShowHandCards();
         }
     }
 
@@ -757,12 +781,13 @@ public class UIManager : MonoBehaviour
         
         if (statusText != null)
         {
-            statusText.text = $"Discard: {remainingDiscards}/4";
+            int maxDiscards = handManager != null ? handManager.MaxDiscards : remainingDiscards;
+            statusText.text = $"Discard: {remainingDiscards}/{maxDiscards}";
         }
-        
+
         if (discardButton != null)
         {
-            bool shouldBeInteractable = remainingDiscards > 0 && !isWinMessageShown;
+            bool shouldBeInteractable = remainingDiscards > 0 && !isGameOverShown;
             discardButton.interactable = shouldBeInteractable;
         }
     }
@@ -787,27 +812,8 @@ public class UIManager : MonoBehaviour
         if (scoreText != null)
         {
             EnsureTextActive(scoreText);
-            
-            int requiredScore = 200;
-            if (handManager != null)
-            {
-                int currentLevel = handManager.CurrentLevel;
-                switch (currentLevel)
-                {
-                    case 1: requiredScore = 200; break;
-                    case 2: requiredScore = 300; break;
-                    case 3: requiredScore = 400; break;
-                    case 4: requiredScore = 500; break;
-                    case 5: requiredScore = 600; break;
-                    case 6: requiredScore = 700; break;
-                    case 7: requiredScore = 800; break;
-                    case 8: requiredScore = 900; break;
-                    case 9: requiredScore = 1000; break;
-                    case 10: requiredScore = 1100; break;
-                    default: requiredScore = 200; break;
-                }
-            }
-            
+
+            int requiredScore = handManager != null ? handManager.GetCurrentScoreThreshold() : 0;
             scoreText.text = $"Score: {score}/{requiredScore}";
         }
     }
@@ -857,54 +863,65 @@ public class UIManager : MonoBehaviour
         }
     }
     
-    private bool isWinMessageShown = false;
-    
-    public void ShowWinMessage()
-    {
-        if (winMessageText != null)
-        {
-            winMessageText.text = "Oyunu Kazandınız!";
-            EnsureTextActive(winMessageText);
-            isWinMessageShown = true;
-        }
-    }
+    private bool isGameOverShown = false;
 
-    public void ShowLoseMessage()
+    // The Thaleah font atlas only contains ASCII glyphs, so these texts must stay ASCII.
+    public void ShowGameOver(bool won, int finalScore, int level)
     {
-        if (winMessageText != null)
-        {
-            winMessageText.text = "Oyunu Kaybettiniz";
-            EnsureTextActive(winMessageText);
-            isWinMessageShown = true;
-        }
-        
-        if (discardButton != null)
-        {
-            discardButton.interactable = false;
-        }
-        
+        isGameOverShown = true;
+
         if (playHandButton != null)
         {
             playHandButton.interactable = false;
         }
-    }
 
-    public void HideLoseMessage()
-    {
-        if (winMessageText != null && isWinMessageShown && winMessageText.text == "Oyunu Kaybettiniz")
-        {
-            winMessageText.gameObject.SetActive(false);
-            isWinMessageShown = false;
-        }
-        
         if (discardButton != null)
         {
-            discardButton.interactable = true;
+            discardButton.interactable = false;
         }
-        
+
+        if (deckInfoText != null)
+        {
+            deckInfoText.gameObject.SetActive(false);
+        }
+
+        if (gameOverTitleText != null)
+        {
+            gameOverTitleText.text = won ? "You Win!" : "Game Over";
+        }
+
+        if (gameOverDetailText != null)
+        {
+            int requiredScore = handManager != null ? handManager.GetCurrentScoreThreshold() : 0;
+            gameOverDetailText.text = won
+                ? $"All {level} levels cleared\nScore: {finalScore}/{requiredScore}"
+                : $"Level {level}\nScore: {finalScore}/{requiredScore}";
+        }
+
+        if (gameOverPanel != null)
+        {
+            gameOverPanel.transform.SetAsLastSibling();
+            gameOverPanel.SetActive(true);
+        }
+    }
+
+    public void HideGameOver()
+    {
+        isGameOverShown = false;
+
+        if (gameOverPanel != null)
+        {
+            gameOverPanel.SetActive(false);
+        }
+
         if (playHandButton != null)
         {
             playHandButton.interactable = true;
+        }
+
+        if (discardButton != null)
+        {
+            discardButton.interactable = handManager == null || handManager.GetRemainingDiscards() > 0;
         }
     }
 
@@ -945,8 +962,8 @@ public class UIManager : MonoBehaviour
         {
             handManager.ShowHandCards();
         }
-        
-        HideLoseMessage();
+
+        HideGameOver();
     }
 
     private void ShowNormalGameUI()
@@ -1114,7 +1131,6 @@ public class UIManager : MonoBehaviour
             new TextBackgroundData(scoreText, "ScoreBackground"),
             new TextBackgroundData(statusText, "DiscardBackground"),
             new TextBackgroundData(handTypeText, "HandTypeBackground"),
-            new TextBackgroundData(winMessageText, "WinMessageBackground"),
             new TextBackgroundData(deckCountText, "DeckCountBackground"),
             new TextBackgroundData(jokerCountText, "JokerCountBackground"),
             new TextBackgroundData(handCountText, "HandCountBackground")
@@ -1127,7 +1143,6 @@ public class UIManager : MonoBehaviour
             { "ScoreBackground", (img) => scoreBackground = img },
             { "DiscardBackground", (img) => discardBackground = img },
             { "HandTypeBackground", (img) => handTypeBackground = img },
-            { "WinMessageBackground", (img) => winMessageBackground = img },
             { "DeckCountBackground", (img) => deckCountBackground = img },
             { "JokerCountBackground", (img) => jokerCountBackground = img },
             { "HandCountBackground", (img) => handCountBackground = img }
@@ -1146,8 +1161,13 @@ public class UIManager : MonoBehaviour
         SetNormalGameUIVisible(false);
         HideAllBackgrounds();
         HideJokerSelectionUI();
-        HideJokerView();
-        
+        HideJokerViewPanel();
+
+        if (gameOverPanel != null)
+        {
+            gameOverPanel.SetActive(false);
+        }
+
         if (playHandButton != null)
         {
             playHandButton.gameObject.SetActive(false);
@@ -1183,7 +1203,6 @@ public class UIManager : MonoBehaviour
             "ScoreBackground",
             "DiscardBackground",
             "HandTypeBackground",
-            "WinMessageBackground",
             "DeckCountBackground",
             "JokerCountBackground",
             "HandCountBackground"
@@ -1233,10 +1252,6 @@ public class UIManager : MonoBehaviour
         if (handTypeBackground != null && handTypeBackground.gameObject != null)
         {
             handTypeBackground.gameObject.SetActive(false);
-        }
-        if (winMessageBackground != null && winMessageBackground.gameObject != null)
-        {
-            winMessageBackground.gameObject.SetActive(false);
         }
         if (deckCountBackground != null && deckCountBackground.gameObject != null)
         {
@@ -1310,25 +1325,13 @@ public class UIManager : MonoBehaviour
     private System.Collections.IEnumerator StartGameAfterScreenHide()
     {
         yield return null;
-        
+
+        // The run (and its initial hand) is started from one place only.
         if (handManager != null)
         {
-            handManager.ShowHandCards();
+            handManager.StartNewRun();
         }
-        
-        DeckManager deckManager = FindFirstObjectByType<DeckManager>();
-        if (deckManager != null)
-        {
-            int baseHandSize = 8;
-            int handSizeBonus = 0;
-            if (handManager != null)
-            {
-                handSizeBonus = handManager.GetTotalHandSizeBonus();
-            }
-            
-            deckManager.DrawInitialHand(baseHandSize + handSizeBonus);
-        }
-        
+
         StartCoroutine(CreateBackgroundPanelsDelayed());
         StartCoroutine(InitializeScoreUIDelayed());
         
