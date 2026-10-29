@@ -2,6 +2,7 @@
 
 A cyberpunk-themed poker roguelike made with Unity, inspired by *Balatro*.
 Build poker hands, beat the score target of each level, and collect jokers that bend the scoring rules.
+All 52 cards and 11 jokers are original pixel art, drawn by hand for this game.
 
 ![Gameplay](docs/images/gameplay.png)
 
@@ -75,6 +76,14 @@ Straights and flushes need all 5 cards. A-2-3-4-5 counts as a straight.
 
 ![Game over](docs/images/game-over.png)
 
+## Art
+
+Every card in the game is hand-drawn pixel art: the full 52-card deck in four suits and all 11 jokers. Each card is 90×135 pixels; the images below show them at 2× scale.
+
+![The 52-card deck: Glitch, Core, Neural and Protocol](docs/images/cards.png)
+
+![The 11 jokers](docs/images/jokers.png)
+
 ## Getting started
 
 **Requirements:** [Unity Hub](https://unity.com/download) with **Unity 6000.3.0f1** (Unity 6.3). To make builds, also install the *Windows Build Support* or *Web Build Support* module.
@@ -108,8 +117,10 @@ Assets/
 │   ├── UI/                         Runtime HUD background panels
 │   └── CardAssets/                 52 card assets and 11 joker assets
 ├── Sprites/                        Card, joker and UI art
+├── Textures/                       Generated background image
 ├── Audio/                          Music and sound effects
 └── Prefabs/CardPrefab.prefab       The card shown in the hand
+Tools/generate_background.py        Script that generates the background (needs Pillow)
 ```
 
 ## Status
@@ -123,8 +134,16 @@ Known limitations:
 
 ## Credits
 
-- Made by [ibrahimceceli](https://github.com/ibrahimceceli)
+- Game design, programming and pixel art (all cards, jokers and suit icons): [ibrahimceceli](https://github.com/ibrahimceceli)
+- UI buttons and panels: simple bordered shapes made for this project
+- Background: procedurally generated neon grid (`Tools/generate_background.py`)
+- Music: "Neon Echo Residue" and "Neon Odds", generated with [Suno](https://suno.com)
 - Click sound: "SFX UI Button Click" by suntemple ([Freesound #253168](https://freesound.org/s/253168/))
-- Font: Thaleah Fat pixel font (`Assets/Thaleah_PixelFont`)
+- Font: [Thaleah Fat](https://tinyworlds.itch.io/free-pixel-font-thaleah) pixel font by Tiny Worlds
 - Tweening library: [DOTween](https://dotween.demigiant.com/) by Demigiant
 - Built with [Unity](https://unity.com/) and TextMesh Pro
+
+## License
+
+No open-source license has been chosen yet, so all rights are reserved by default.
+The card, joker and suit icon artwork is © ibrahimceceli and may not be reused without permission.
