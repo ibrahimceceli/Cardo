@@ -24,7 +24,7 @@ public class CardLayoutCalculator : ICardLayoutCalculator
     // Layout configuration parameters
     private const float ArcRadius = 1f;
     private const float MaxAngle = 10f;
-    private const float HorizontalSpacing = 1f; // Test için artırıldı (normal: 1f)..kural 5: Performans
+    private const float HorizontalSpacing = 1f;
     private const float ZOffsetPerCard = 0.01f;
     private const float MaxRollAngle = 8f;
 
